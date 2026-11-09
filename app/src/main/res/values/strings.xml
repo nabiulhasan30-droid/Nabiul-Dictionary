@@ -1,0 +1,17 @@
+<resources>
+    <string name="app_name">নবীউল অফলাইন অভিধান</string>
+    <string name="app_name_en">Nabiul Offline Dictionary</string>
+    <string name="search_hint">যেকোনো ইংরেজি বা বাংলা শব্দ খুঁজুন...</string>
+    <string name="mode_en_to_bn">EN ➔ BN</string>
+    <string name="mode_bn_to_en">BN ➔ EN</string>
+    <string name="mode_bn_to_bn">BN ➔ BN</string>
+    <string name="total_words_count">২৪৪,০০০+ অফলাইন শব্দ ভাণ্ডার</string>
+    <string name="no_results">কোনো ফলাফল পাওয়া যায়নি</string>
+    <string name="search_guide">ইংরেজি বা বাংলা শব্দ লিখে অনুসন্ধান করুন</string>
+    <string name="copied">ক্লিপবোর্ডে কপি করা হয়েছে</string>
+    <string name="bookmark_added">বুকমার্কে যোগ করা হয়েছে</string>
+    <string name="bookmark_removed">বুকমার্ক থেকে সরানো হয়েছে</string>
+    <string name="history_title">সম্প্রতি খোঁজা শব্দ</string>
+    <string name="bookmarks_title">সংরক্ষিত শব্দসমূহ</string>
+    <string name="clear_history">ইতিহাস মুছুন</string>
+</resources>

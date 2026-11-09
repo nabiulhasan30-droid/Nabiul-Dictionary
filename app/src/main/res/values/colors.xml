@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#0D5C75</color>
+    <color name="primary_variant">#094053</color>
+    <color name="secondary">#00897B</color>
+    <color name="secondary_variant">#00695C</color>
+    <color name="accent">#FF8F00</color>
+
+    <color name="background">#F7F9FA</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="surface_variant">#EDF2F4</color>
+
+    <color name="text_primary">#1C252C</color>
+    <color name="text_secondary">#546E7A</color>
+    <color name="text_hint">#90A4AE</color>
+
+    <color name="chip_bg_selected">#0D5C75</color>
+    <color name="chip_text_selected">#FFFFFF</color>
+    <color name="chip_bg_unselected">#E2E8F0</color>
+    <color name="chip_text_unselected">#334155</color>
+
+    <color name="card_border">#E2E8F0</color>
+    <color name="badge_en">#1E88E5</color>
+    <color name="badge_bn">#43A047</color>
+    <color name="badge_bnbn">#8E24AA</color>
+</resources>
