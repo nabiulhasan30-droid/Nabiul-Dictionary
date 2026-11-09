@@ -19,7 +19,7 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
     companion object {
         private const val TAG = "DictionaryDbHelper"
         const val DB_NAME = "dictionary.db"
-        private const val DB_VERSION = 1
+        private const val DB_VERSION = 2
 
         @Volatile
         private var INSTANCE: DictionaryDatabaseHelper? = null
@@ -36,9 +36,16 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
 
     suspend fun ensureDatabaseReady() = withContext(Dispatchers.IO) {
         val file = dbFile
-        if (!file.exists() || file.length() == 0L) {
+        val assetLength = try {
+            context.assets.open(DB_NAME).use { it.available().toLong() }
+        } catch (e: Exception) {
+            0L
+        }
+
+        // If file does not exist or size doesn't match the new expanded asset db
+        if (!file.exists() || (assetLength > 0 && file.length() != assetLength)) {
             file.parentFile?.mkdirs()
-            Log.d(TAG, "Copying dictionary.db from assets to ${file.absolutePath}")
+            Log.d(TAG, "Copying updated dictionary.db from assets to ${file.absolutePath}")
             context.assets.open(DB_NAME).use { input ->
                 FileOutputStream(file).use { output ->
                     input.copyTo(output)
@@ -49,28 +56,40 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
     }
 
     override fun onCreate(db: SQLiteDatabase) {
-        // Tables are already created in pre-packaged database
+        // Pre-packaged database
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
     }
 
-    suspend fun searchWords(query: String, mode: DictionaryMode, limit: Int = 60): List<DictionaryEntry> = withContext(Dispatchers.IO) {
+    private fun isBengaliText(text: String): Boolean {
+        return text.any { it in '\u0980'..'\u09FF' }
+    }
+
+    suspend fun searchWords(query: String, requestedMode: DictionaryMode, limit: Int = 60): List<DictionaryEntry> = withContext(Dispatchers.IO) {
         ensureDatabaseReady()
         val results = mutableListOf<DictionaryEntry>()
         val trimmed = query.trim()
         if (trimmed.isEmpty()) return@withContext results
 
+        val isQueryBengali = isBengaliText(trimmed)
+
+        // Auto-detect mode if user typed in opposite script
+        val effectiveMode = when {
+            isQueryBengali && requestedMode == DictionaryMode.EN_TO_BN -> DictionaryMode.BN_TO_EN
+            !isQueryBengali && requestedMode != DictionaryMode.EN_TO_BN -> DictionaryMode.EN_TO_BN
+            else -> requestedMode
+        }
+
         val db = readableDatabase
-        val table = when (mode) {
+        val table = when (effectiveMode) {
             DictionaryMode.EN_TO_BN -> "en_to_bn"
             DictionaryMode.BN_TO_EN -> "bn_to_en"
             DictionaryMode.BN_TO_BN -> "bn_to_bn"
         }
+        val meaningCol = if (effectiveMode == DictionaryMode.BN_TO_BN) "definition" else "meaning"
 
-        val meaningCol = if (mode == DictionaryMode.BN_TO_BN) "definition" else "meaning"
-
-        // Prioritize: 1. Exact match, 2. Prefix match (starts with query), 3. Substring match
+        // Step 1: Query exact and prefix matches
         val sql = """
             SELECT id, word, $meaningCol FROM $table 
             WHERE word LIKE ?
@@ -86,6 +105,8 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
         """.trimIndent()
 
         val cursor: Cursor = db.rawQuery(sql, arrayOf("%$trimmed%", trimmed, trimmed, limit.toString()))
+        val addedWords = mutableSetOf<String>()
+
         cursor.use { c ->
             val idIdx = c.getColumnIndexOrThrow("id")
             val wordIdx = c.getColumnIndexOrThrow("word")
@@ -95,12 +116,59 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
                 val id = c.getLong(idIdx)
                 val word = c.getString(wordIdx)
                 val meaning = c.getString(meaningIdx)
-                results.add(DictionaryEntry(id, word, meaning, mode))
+                results.add(DictionaryEntry(id, word, meaning, effectiveMode))
+                addedWords.add(word.lowercase())
             }
         }
 
-        // Check bookmark states
-        val bookmarkedWords = getBookmarkedWordsSet(mode)
+        // Step 2: Smart Morphological Lemmatization (Stemming Fallback)
+        if (results.size < 5) {
+            val stemCandidates = generateStemCandidates(trimmed, isQueryBengali)
+            for (stem in stemCandidates) {
+                if (addedWords.contains(stem.lowercase())) continue
+
+                val stemSql = "SELECT id, word, $meaningCol FROM $table WHERE word = ? COLLATE NOCASE LIMIT 2"
+                val stemCursor = db.rawQuery(stemSql, arrayOf(stem))
+                stemCursor.use { sc ->
+                    val idIdx = sc.getColumnIndexOrThrow("id")
+                    val wordIdx = sc.getColumnIndexOrThrow("word")
+                    val meaningIdx = sc.getColumnIndexOrThrow(meaningCol)
+
+                    while (sc.moveToNext()) {
+                        val id = sc.getLong(idIdx)
+                        val word = sc.getString(wordIdx)
+                        val meaning = sc.getString(meaningIdx)
+                        val displayWord = "$trimmed (মূল শব্দ: $word)"
+                        results.add(DictionaryEntry(id, displayWord, meaning, effectiveMode))
+                        addedWords.add(word.lowercase())
+                    }
+                }
+            }
+        }
+
+        // Step 3: Deep definition search fallback if still empty
+        if (results.isEmpty() && trimmed.length >= 3) {
+            val defSql = "SELECT id, word, $meaningCol FROM $table WHERE $meaningCol LIKE ? LIMIT 15"
+            val defCursor = db.rawQuery(defSql, arrayOf("%$trimmed%"))
+            defCursor.use { dc ->
+                val idIdx = dc.getColumnIndexOrThrow("id")
+                val wordIdx = dc.getColumnIndexOrThrow("word")
+                val meaningIdx = dc.getColumnIndexOrThrow(meaningCol)
+
+                while (dc.moveToNext()) {
+                    val id = dc.getLong(idIdx)
+                    val word = dc.getString(wordIdx)
+                    val meaning = dc.getString(meaningIdx)
+                    if (!addedWords.contains(word.lowercase())) {
+                        results.add(DictionaryEntry(id, word, meaning, effectiveMode))
+                        addedWords.add(word.lowercase())
+                    }
+                }
+            }
+        }
+
+        // Bookmark states
+        val bookmarkedWords = getBookmarkedWordsSet(effectiveMode)
         for (entry in results) {
             if (bookmarkedWords.contains(entry.word)) {
                 entry.isBookmarked = true
@@ -108,6 +176,81 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
         }
 
         results
+    }
+
+    private fun generateStemCandidates(query: String, isBengali: Boolean): List<String> {
+        val list = mutableListOf<String>()
+        val q = query.trim()
+        if (isBengali) {
+            val suffixes = listOf(
+                "গুলোকে", "গুলোর", "গুলো", "গুলি", "গুলিকে", "গুলির",
+                "দেরকে", "দের", "খানিক", "খানা", "খানি", "টিকে",
+                "টার", "টির", "টি", "টা", "কে", "রে", "তে", "য়ে", "র", "এর",
+                "ছিলেন", "ছেন", "তেন", "লেন", "বেন", "ছিল", "ছে", "বো", "তাম", "বে"
+            )
+            for (s in suffixes) {
+                if (q.endsWith(s) && q.length > s.length + 1) {
+                    list.add(q.removeSuffix(s))
+                }
+            }
+        } else {
+            val ql = q.lowercase()
+            if (ql.endsWith("ing") && ql.length > 4) {
+                list.add(ql.removeSuffix("ing"))
+                list.add(ql.removeSuffix("ing") + "e")
+                if (ql.length > 5 && ql[ql.length - 4] == ql[ql.length - 5]) {
+                    list.add(ql.substring(0, ql.length - 4))
+                }
+            }
+            if (ql.endsWith("ed") && ql.length > 3) {
+                list.add(ql.removeSuffix("ed"))
+                list.add(ql.removeSuffix("d"))
+                if (ql.endsWith("ied") && ql.length > 4) {
+                    list.add(ql.removeSuffix("ied") + "y")
+                }
+            }
+            if (ql.endsWith("ies") && ql.length > 4) {
+                list.add(ql.removeSuffix("ies") + "y")
+            }
+            if (ql.endsWith("es") && ql.length > 3) {
+                list.add(ql.removeSuffix("es"))
+            }
+            if (ql.endsWith("s") && ql.length > 2) {
+                list.add(ql.removeSuffix("s"))
+            }
+            if (ql.endsWith("ly") && ql.length > 3) {
+                list.add(ql.removeSuffix("ly"))
+                if (ql.endsWith("ily") && ql.length > 4) {
+                    list.add(ql.removeSuffix("ily") + "y")
+                }
+            }
+            if (ql.endsWith("ness") && ql.length > 5) {
+                list.add(ql.removeSuffix("ness"))
+            }
+            if (ql.endsWith("able") && ql.length > 5) {
+                list.add(ql.removeSuffix("able"))
+                list.add(ql.removeSuffix("able") + "e")
+            }
+            if (ql.endsWith("ful") && ql.length > 4) {
+                list.add(ql.removeSuffix("ful"))
+            }
+            if (ql.endsWith("less") && ql.length > 5) {
+                list.add(ql.removeSuffix("less"))
+            }
+            if (ql.endsWith("er") && ql.length > 3) {
+                list.add(ql.removeSuffix("er"))
+            }
+            if (ql.endsWith("est") && ql.length > 4) {
+                list.add(ql.removeSuffix("est"))
+            }
+            val prefixes = listOf("un", "in", "im", "dis", "non", "re")
+            for (p in prefixes) {
+                if (ql.startsWith(p) && ql.length > p.length + 2) {
+                    list.add(ql.removePrefix(p))
+                }
+            }
+        }
+        return list.distinct()
     }
 
     private fun getBookmarkedWordsSet(mode: DictionaryMode): Set<String> {

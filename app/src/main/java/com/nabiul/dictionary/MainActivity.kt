@@ -56,7 +56,8 @@ class MainActivity : AppCompatActivity() {
     private fun setupRecyclerView() {
         adapter = DictionaryAdapter(
             onSpeakClick = { entry ->
-                ttsManager.speak(entry.word, entry.mode)
+                val cleanWord = entry.word.substringBefore("(").trim()
+                ttsManager.speak(cleanWord, entry.mode)
             },
             onBookmarkClick = { entry, pos ->
                 lifecycleScope.launch {
