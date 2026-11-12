@@ -4,9 +4,9 @@
 
 ## ✨ প্রধান বৈশিষ্ট্যসমূহ (Features):
 * **৩টি শক্তিশালী সার্চ মোড:**
-  1. 🇬🇧 ➔ 🇧🇩 **English to Bengali:** ৫৩০,০০০+ ইংরেজি শব্দ, inflected forms ও অর্থ।
-  2. 🇧🇩 ➔ 🇬🇧 **Bengali to English:** ১৫১,০০০+ বাংলা শব্দ ও প্রতিশব্দ।
-  3. 🇧🇩 ➔ 🇧🇩 **Bengali to Bengali:** ১১৯,০০০+ বাংলা শব্দের বিশদ বাংলা অর্থ ও সমার্থক শব্দ।
+  1. 🇬🇧 ➔ 🇧🇩 **English to Bengali:** ৫৪০,০০০ ইংরেজি শব্দ, inflected forms ও নির্ভুল অর্থ।
+  2. 🇧🇩 ➔ 🇬🇧 **Bengali to English:** ১২৮,৩০০+ বাংলা শব্দ ও প্রতিশব্দ।
+  3. 🇧🇩 ➔ 🇧🇩 **Bengali to Bengali:** ১০৬,৮০০+ বাংলা শব্দের বিশদ বাংলা অর্থ ও সমার্থক শব্দ।
 * ⚡ **সুপার ফাস্ট অফলাইন সার্চ:** B-Tree ইনডেক্স-ভিত্তিক রেঞ্জ সার্চ, স্মার্ট মর্ফোলজিক্যাল লেমাটাইজেশন ও ফাজি বানান-সংশোধনের মাধ্যমে মিলি-সেকেন্ডে তাৎক্ষণিক ফলাফল।
 * 🔊 **অফলাইন অডিও উচ্চারণ (Text-to-Speech):** ইংরেজি ও বাংলা শব্দের নিখুঁত উচ্চারণ শোনার সুবিধা।
 * 🔖 **বুকমার্ক / প্রিয় তালিকা:** প্রয়োজনীয় শব্দ সংরক্ষণ ও সহজে খোঁজা (আপডেটের সময়ও সংরক্ষিত থাকে)।
@@ -17,7 +17,7 @@
 ## 🛠 প্রযুক্তি ও আর্কিটেকচার:
 * **Language:** Kotlin
 * **Architecture:** MVVM + Coroutines
-* **Database:** Pre-packaged Compressed SQLite (`dictionary.db.gz`, 800,655+ entries)
+* **Database:** Pre-packaged Compressed SQLite (`dictionary.db.gz`, 775,177 verified entries)
 * **Audio Engine:** Android TextToSpeech (TTS)
 * **Build System:** Gradle 8.2 + AGP 8.2.2
 * **Permanent Keystore:** Consistent signature configuration for seamless updates without package conflict.

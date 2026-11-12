@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.text.Normalizer
 import java.util.zip.GZIPInputStream
 
 class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(context, DB_NAME, null, DB_VERSION) {
@@ -24,8 +25,8 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
         private const val TAG = "DictionaryDbHelper"
         const val DB_NAME = "dictionary.db"
         private const val ASSET_DB_GZ = "dictionary.db.gz"
-        private const val DB_VERSION = 3
-        private const val ASSET_DB_VERSION = 3
+        private const val DB_VERSION = 4
+        private const val ASSET_DB_VERSION = 4
         private const val PREFS_NAME = "nabiul_dictionary_prefs"
         private const val KEY_ASSET_VERSION = "asset_db_version"
 
@@ -205,6 +206,28 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
         return text.any { it in '\u0980'..'\u09FF' }
     }
 
+    private fun normalizeBengali(text: String): String {
+        var s = Normalizer.normalize(text.trim(), Normalizer.Form.NFC)
+        s = s.replace("\u09A1\u09BC", "\u09DC") // ড + ় -> ড়
+             .replace("\u09A2\u09BC", "\u09DD") // ঢ + ় -> ঢ়
+             .replace("\u09AF\u09BC", "\u09DF") // য + ় -> য়
+             .replace("\u09C7\u09BE", "\u09CB") // ে + া -> ো
+             .replace("\u09C7\u09D7", "\u09CC") // ে + ৗ -> ৌ
+             .replace("\u200C", "")
+        val sb = StringBuilder(s.length)
+        for (i in s.indices) {
+            val ch = s[i]
+            if (ch == '\u200D') {
+                val prevIsHalant = i > 0 && s[i - 1] == '\u09CD'
+                val nextIsYa = i + 1 < s.length && s[i + 1] == '\u09AF'
+                if (prevIsHalant && nextIsYa) sb.append(ch)
+            } else {
+                sb.append(ch)
+            }
+        }
+        return sb.toString().replace(Regex("\\s+"), " ").trim()
+    }
+
     private fun buildPrefixUpperBound(prefix: String): String? {
         if (prefix.isEmpty()) return null
         val last = prefix.last()
@@ -220,17 +243,14 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
         }
     }
 
-    private fun queryExactAndPrefix(
+    private fun queryExact(
         db: SQLiteDatabase,
         mode: DictionaryMode,
         query: String,
-        limit: Int,
         results: MutableList<DictionaryEntry>,
         addedWords: MutableSet<String>
     ) {
         val (table, meaningCol) = tableAndColFor(mode)
-
-        // Tier 1: Exact match via B-Tree index (<1ms)
         val exactSql = if (mode == DictionaryMode.EN_TO_BN) {
             "SELECT id, word, $meaningCol FROM $table WHERE word = ? COLLATE NOCASE LIMIT 10"
         } else {
@@ -239,20 +259,29 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
         db.rawQuery(exactSql, arrayOf(query)).use { c ->
             readCursorIntoResults(c, meaningCol, mode, results, addedWords, labelPrefix = null)
         }
+    }
 
+    private fun queryPrefix(
+        db: SQLiteDatabase,
+        mode: DictionaryMode,
+        query: String,
+        limit: Int,
+        results: MutableList<DictionaryEntry>,
+        addedWords: MutableSet<String>
+    ) {
         if (results.size >= limit) return
-
-        // Tier 2: Index-backed Prefix Range Scan (<2ms even on 800k+ rows)
+        val (table, meaningCol) = tableAndColFor(mode)
         val prefixKey = if (mode == DictionaryMode.EN_TO_BN) query.lowercase() else query
         val upper = buildPrefixUpperBound(prefixKey)
         val remaining = limit - results.size
         if (upper != null) {
-            val prefixSql = if (query.length >= 3) {
+            val useSqlLengthSort = prefixKey.length >= 4
+            val prefixSql = if (useSqlLengthSort) {
                 "SELECT id, word, $meaningCol FROM $table WHERE word >= ? AND word < ? ORDER BY LENGTH(word), word LIMIT ?"
             } else {
                 "SELECT id, word, $meaningCol FROM $table WHERE word >= ? AND word < ? ORDER BY word LIMIT ?"
             }
-            val fetchLimit = if (query.length < 3) maxOf(remaining, 120) else remaining + 10
+            val fetchLimit = if (useSqlLengthSort) remaining + 10 else maxOf(remaining + 20, 260)
             val temp = mutableListOf<DictionaryEntry>()
             db.rawQuery(prefixSql, arrayOf(prefixKey, upper, fetchLimit.toString())).use { c ->
                 val idIdx = c.getColumnIndexOrThrow("id")
@@ -265,7 +294,7 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
                     }
                 }
             }
-            if (query.length < 3 && temp.size > 1) {
+            if (!useSqlLengthSort && temp.size > 1) {
                 temp.sortWith(compareBy<DictionaryEntry> { it.word.length }.thenBy { it.word })
             }
             for (item in temp) {
@@ -306,10 +335,12 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
     suspend fun searchWords(query: String, requestedMode: DictionaryMode, limit: Int = 60): List<DictionaryEntry> = withContext(Dispatchers.IO) {
         ensureDatabaseReady()
         val results = mutableListOf<DictionaryEntry>()
-        val trimmed = query.trim()
-        if (trimmed.isEmpty()) return@withContext results
+        val trimmedRaw = query.trim()
+        if (trimmedRaw.isEmpty()) return@withContext results
 
-        val isQueryBengali = isBengaliText(trimmed)
+        val isQueryBengali = isBengaliText(trimmedRaw)
+        val trimmed = if (isQueryBengali) normalizeBengali(trimmedRaw) else trimmedRaw.replace(Regex("\\s+"), " ").trim()
+        if (trimmed.isEmpty()) return@withContext results
 
         // Auto-detect mode if user typed in opposite script
         val effectiveMode = when {
@@ -320,14 +351,14 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
 
         val db = readableDatabase
         val addedWords = mutableSetOf<String>()
-
-        // Tier 1 & 2: Exact + Index-backed Prefix search
-        queryExactAndPrefix(db, effectiveMode, trimmed, limit, results, addedWords)
-
         val (table, meaningCol) = tableAndColFor(effectiveMode)
 
-        // Tier 3: Smart Morphological Lemmatization, Spelling Variants & Compound Splitting
-        if (results.size < 10) {
+        // Tier 1: Exact match via B-Tree index (<1ms)
+        queryExact(db, effectiveMode, trimmed, results, addedWords)
+        val hasExactMatch = results.isNotEmpty()
+
+        // Tier 2: Lemmatization / Root Stem lookup runs IMMEDIATELY if no exact match exists
+        if (!hasExactMatch) {
             val stemCandidates = generateStemCandidates(trimmed, isQueryBengali)
             for (stem in stemCandidates) {
                 if (results.size >= limit) break
@@ -353,10 +384,13 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
             }
         }
 
+        // Tier 3: Index-backed Prefix Range Scan
+        queryPrefix(db, effectiveMode, trimmed, limit, results, addedWords)
+
         // Tier 4: Cross-mode Bengali fallback (if BN_TO_BN misses, check BN_TO_EN and vice-versa)
         if (results.isEmpty() && isQueryBengali) {
             val altMode = if (effectiveMode == DictionaryMode.BN_TO_BN) DictionaryMode.BN_TO_EN else DictionaryMode.BN_TO_BN
-            queryExactAndPrefix(db, altMode, trimmed, 25, results, addedWords)
+            queryExact(db, altMode, trimmed, results, addedWords)
             if (results.isEmpty()) {
                 val (altTable, altMeaningCol) = tableAndColFor(altMode)
                 for (stem in generateStemCandidates(trimmed, true)) {
@@ -374,17 +408,10 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
                     }
                 }
             }
+            queryPrefix(db, altMode, trimmed, 25, results, addedWords)
         }
 
-        // Tier 5: Substring word search fallback (only if still very few results)
-        if (results.size < 3 && trimmed.length >= 3) {
-            val subSql = "SELECT id, word, $meaningCol FROM $table WHERE word LIKE ? LIMIT 20"
-            db.rawQuery(subSql, arrayOf("%$trimmed%")).use { sc ->
-                readCursorIntoResults(sc, meaningCol, effectiveMode, results, addedWords, labelPrefix = null)
-            }
-        }
-
-        // Tier 6: Fast Prefix-Bucket Fuzzy Spelling Correction (catches typos!)
+        // Tier 5: Fast Prefix-Bucket Fuzzy Spelling Correction BEFORE substring/definition search
         if (results.isEmpty() && trimmed.length >= 3) {
             val fuzzyHits = findFuzzyMatches(db, effectiveMode, trimmed, maxResults = 10)
             for (entry in fuzzyHits) {
@@ -394,11 +421,27 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
             }
         }
 
-        // Tier 7: Deep definition search fallback if still empty
+        // Tier 6: Substring word search fallback (only if still empty)
         if (results.isEmpty() && trimmed.length >= 3) {
-            val defSql = "SELECT id, word, $meaningCol FROM $table WHERE $meaningCol LIKE ? LIMIT 15"
+            val subSql = "SELECT id, word, $meaningCol FROM $table WHERE word LIKE ? LIMIT 15"
+            db.rawQuery(subSql, arrayOf("%$trimmed%")).use { sc ->
+                readCursorIntoResults(sc, meaningCol, effectiveMode, results, addedWords, labelPrefix = null)
+            }
+        }
+
+        // Tier 7: Deep definition search fallback ONLY for >= 4 chars if still empty
+        if (results.isEmpty() && trimmed.length >= 4) {
+            val defSql = "SELECT id, word, $meaningCol FROM $table WHERE $meaningCol LIKE ? LIMIT 10"
             db.rawQuery(defSql, arrayOf("%$trimmed%")).use { dc ->
-                readCursorIntoResults(dc, meaningCol, effectiveMode, results, addedWords, labelPrefix = null)
+                val idIdx = dc.getColumnIndexOrThrow("id")
+                val wordIdx = dc.getColumnIndexOrThrow("word")
+                val meaningIdx = dc.getColumnIndexOrThrow(meaningCol)
+                while (dc.moveToNext()) {
+                    val word = dc.getString(wordIdx)
+                    if (addedWords.add(word.lowercase())) {
+                        results.add(DictionaryEntry(dc.getLong(idIdx), "$word (অর্থে মিল)", dc.getString(meaningIdx), effectiveMode))
+                    }
+                }
             }
         }
 
@@ -430,7 +473,7 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
         val scored = mutableListOf<Pair<Int, DictionaryEntry>>()
         val seenWords = mutableSetOf<String>()
 
-        for (prefixLen in listOf(3, 2, 1)) {
+        for (prefixLen in listOf(3, 2)) {
             if (qNorm.length < prefixLen) continue
             val pref = qNorm.take(prefixLen)
             val upper = buildPrefixUpperBound(pref) ?: continue
@@ -450,6 +493,52 @@ class DictionaryDatabaseHelper(private val context: Context) : SQLiteOpenHelper(
                 }
             }
             if (scored.isNotEmpty()) break
+        }
+
+        // If 2-3 char prefix missed (e.g. typo in position 1 or 2 like "bautiful"), try first+last char bucket
+        if (scored.isEmpty() && qNorm.length >= 4) {
+            val first = qNorm.take(1)
+            val last = qNorm.last()
+            val upper = buildPrefixUpperBound(first)
+            if (upper != null) {
+                val sql = "SELECT id, word, $meaningCol FROM $table WHERE word >= ? AND word < ? AND word LIKE ? AND LENGTH(word) BETWEEN ? AND ? LIMIT 300"
+                db.rawQuery(sql, arrayOf(first, upper, "$first%$last", minL, maxL)).use { c ->
+                    val idIdx = c.getColumnIndexOrThrow("id")
+                    val wordIdx = c.getColumnIndexOrThrow("word")
+                    val mIdx = c.getColumnIndexOrThrow(meaningCol)
+                    while (c.moveToNext()) {
+                        val word = c.getString(wordIdx)
+                        val wNorm = if (mode == DictionaryMode.EN_TO_BN) word.lowercase() else word
+                        if (!seenWords.add(wNorm)) continue
+                        val d = levenshteinBounded(qNorm, wNorm, maxDist)
+                        if (d in 1..maxDist) {
+                            scored.add(d to DictionaryEntry(c.getLong(idIdx), "$word (সম্ভাব্য বানান)", c.getString(mIdx), mode))
+                        }
+                    }
+                }
+            }
+        }
+
+        if (scored.isEmpty()) {
+            val pref = qNorm.take(1)
+            val upper = buildPrefixUpperBound(pref)
+            if (upper != null) {
+                val sql = "SELECT id, word, $meaningCol FROM $table WHERE word >= ? AND word < ? AND LENGTH(word) BETWEEN ? AND ? LIMIT 400"
+                db.rawQuery(sql, arrayOf(pref, upper, minL, maxL)).use { c ->
+                    val idIdx = c.getColumnIndexOrThrow("id")
+                    val wordIdx = c.getColumnIndexOrThrow("word")
+                    val mIdx = c.getColumnIndexOrThrow(meaningCol)
+                    while (c.moveToNext()) {
+                        val word = c.getString(wordIdx)
+                        val wNorm = if (mode == DictionaryMode.EN_TO_BN) word.lowercase() else word
+                        if (!seenWords.add(wNorm)) continue
+                        val d = levenshteinBounded(qNorm, wNorm, maxDist)
+                        if (d in 1..maxDist) {
+                            scored.add(d to DictionaryEntry(c.getLong(idIdx), "$word (সম্ভাব্য বানান)", c.getString(mIdx), mode))
+                        }
+                    }
+                }
+            }
         }
 
         if (scored.isEmpty()) return emptyList()

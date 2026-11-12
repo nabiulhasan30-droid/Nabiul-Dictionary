@@ -99,7 +99,7 @@ class MainActivity : AppCompatActivity() {
             } else {
                 searchJob = lifecycleScope.launch {
                     delay(120) // Fast debounce
-                    performSearch(query)
+                    executeSearch(query)
                 }
             }
         }
@@ -160,20 +160,25 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun performSearch(query: String) {
-        lifecycleScope.launch {
-            val results = dbHelper.searchWords(query, currentMode)
-            if (results.isNotEmpty()) {
-                dbHelper.addSearchHistory(query, currentMode)
-                adapter.updateList(results)
-                binding.rvResults.visibility = View.VISIBLE
-                binding.layoutEmptyState.visibility = View.GONE
-            } else {
-                adapter.updateList(emptyList())
-                binding.rvResults.visibility = View.GONE
-                binding.layoutEmptyState.visibility = View.VISIBLE
-                binding.tvEmptyTitle.text = getString(R.string.no_results)
-                binding.tvEmptySubtitle.text = "'$query' এর জন্য কোনো অর্থ খুঁজে পাওয়া যায়নি।"
-            }
+        searchJob?.cancel()
+        searchJob = lifecycleScope.launch {
+            executeSearch(query)
+        }
+    }
+
+    private suspend fun executeSearch(query: String) {
+        val results = dbHelper.searchWords(query, currentMode)
+        if (results.isNotEmpty()) {
+            dbHelper.addSearchHistory(query, currentMode)
+            adapter.updateList(results)
+            binding.rvResults.visibility = View.VISIBLE
+            binding.layoutEmptyState.visibility = View.GONE
+        } else {
+            adapter.updateList(emptyList())
+            binding.rvResults.visibility = View.GONE
+            binding.layoutEmptyState.visibility = View.VISIBLE
+            binding.tvEmptyTitle.text = getString(R.string.no_results)
+            binding.tvEmptySubtitle.text = "'$query' এর জন্য কোনো অর্থ খুঁজে পাওয়া যায়নি।"
         }
     }
 
