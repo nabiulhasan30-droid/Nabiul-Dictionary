@@ -208,7 +208,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
             android:gravity="center"
-            android:text="সম্পূর্ণ অফলাইনে ইংরেজি থেকে বাংলা, বাংলা থেকে ইংরেজি এবং বাংলা থেকে বাংলা ২৪৪,০০০+ শব্দের বিশদ অর্থ জানুন।"
+            android:text="@string/welcome_subtitle"
             android:textColor="@color/text_secondary"
             android:textSize="14sp" />
 

@@ -95,7 +95,7 @@ class MainActivity : AppCompatActivity() {
                 binding.rvResults.visibility = View.GONE
                 binding.layoutEmptyState.visibility = View.VISIBLE
                 binding.tvEmptyTitle.text = getString(R.string.search_guide)
-                binding.tvEmptySubtitle.text = "সম্পূর্ণ অফলাইনে ইংরেজি থেকে বাংলা, বাংলা থেকে ইংরেজি এবং বাংলা থেকে বাংলা ২৪৪,০০০+ শব্দের বিশদ অর্থ জানুন।"
+                binding.tvEmptySubtitle.text = getString(R.string.welcome_subtitle)
             } else {
                 searchJob = lifecycleScope.launch {
                     delay(120) // Fast debounce

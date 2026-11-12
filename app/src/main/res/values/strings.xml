@@ -5,7 +5,8 @@
     <string name="mode_en_to_bn">EN ➔ BN</string>
     <string name="mode_bn_to_en">BN ➔ EN</string>
     <string name="mode_bn_to_bn">BN ➔ BN</string>
-    <string name="total_words_count">২৪৪,০০০+ অফলাইন শব্দ ভাণ্ডার</string>
+    <string name="total_words_count">৮০০,০০০+ অফলাইন শব্দ ভাণ্ডার</string>
+    <string name="welcome_subtitle">সম্পূর্ণ অফলাইনে ইংরেজি থেকে বাংলা, বাংলা থেকে ইংরেজি এবং বাংলা থেকে বাংলা ৮০০,০০০+ শব্দের বিশদ অর্থ জানুন।</string>
     <string name="no_results">কোনো ফলাফল পাওয়া যায়নি</string>
     <string name="search_guide">ইংরেজি বা বাংলা শব্দ লিখে অনুসন্ধান করুন</string>
     <string name="copied">ক্লিপবোর্ডে কপি করা হয়েছে</string>
